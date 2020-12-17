@@ -6,6 +6,8 @@ import cv2
 import torch
 import torch.backends.cudnn as cudnn
 from numpy import random
+import paho.mqtt.client as mqtt
+import json
 
 from models.experimental import attempt_load
 from utils.datasets import LoadStreams, LoadImages
@@ -13,6 +15,41 @@ from utils.general import check_img_size, non_max_suppression, apply_classifier,
     strip_optimizer, set_logging, increment_path
 from utils.plots import plot_one_box
 from utils.torch_utils import select_device, load_classifier, time_synchronized
+import os
+
+MAX_FPS = int(os.environ.get('max_fps', '10'))
+
+def get_topic_config():
+    MQTT_TOPIC = os.environ.get('topic', 'v1/devices/chicken_counter/telemetry')
+    broker_url = os.environ.get('broker_url', 'localhost')
+    broker_port = int(os.environ.get('broker_port', '1883'))
+    username = os.environ.get('username', 'aTbDLqllhSQAyWLeE6rx')
+    password = os.environ.get('password', '')
+
+    return {
+		"topic": MQTT_TOPIC, 
+		"broker_url": broker_url, 
+		"broker_port": broker_port, 
+		"username": username,
+		"password": password,
+	}
+
+def mqtt_topic():
+	mylist = []
+	mycount = []
+    
+	config = get_topic_config()
+	
+	client = mqtt.Client()
+	client.username_pw_set(config['username'])
+	client.connect(config["broker_url"], config["broker_port"])
+	client.loop_start()
+	return client
+
+def publish_results(client, detections_classes_numbers):
+    config = get_topic_config()
+    MQTT_MSG = json.dumps(detections_classes_numbers)
+    client.publish(config['topic'], MQTT_MSG)
 
 
 def detect(save_img=False):
@@ -57,9 +94,32 @@ def detect(save_img=False):
 
     # Run inference
     t0 = time.time()
+
+    # restrict framerate
+    fps = MAX_FPS
+    loop_delta = 1./fps
+    current_time = target_time = time.time()    
+
     img = torch.zeros((1, 3, imgsz, imgsz), device=device)  # init img
     _ = model(img.half() if half else img) if device.type != 'cpu' else None  # run once
     for path, img, im0s, vid_cap in dataset:
+        # restrict framerate
+        previous_time, current_time = current_time, time.time()
+        time_delta = current_time - previous_time
+        print('frequency: %s' % (1. / time_delta))
+
+        #### sleep management
+        target_time += loop_delta
+        sleep_time = target_time - time.time()
+        if sleep_time > 0:
+           time.sleep(sleep_time)
+        else:
+           print('took too long')
+
+        #### processing
+        # processing example that sleeps a random time between 0 and loop_delta/2.
+        time.sleep(random.uniform(0, loop_delta / 2.))
+
         img = torch.from_numpy(img).to(device)
         img = img.half() if half else img.float()  # uint8 to fp16/32
         img /= 255.0  # 0 - 255 to 0.0 - 1.0
@@ -93,10 +153,13 @@ def detect(save_img=False):
                 # Rescale boxes from img_size to im0 size
                 det[:, :4] = scale_coords(img.shape[2:], det[:, :4], im0.shape).round()
 
+                detections_classes_numbers = []
                 # Print results
                 for c in det[:, -1].unique():
                     n = (det[:, -1] == c).sum()  # detections per class
                     s += f'{n} {names[int(c)]}s, '  # add to string
+                    detections_classes_numbers.append({"class": n.cpu().numpy().tolist(), "count": names[int(c)]})
+                publish_results(client, detections_classes_numbers)
 
                 # Write results
                 for *xyxy, conf, cls in reversed(det):
@@ -142,7 +205,6 @@ def detect(save_img=False):
 
     print(f'Done. ({time.time() - t0:.3f}s)')
 
-
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('--weights', nargs='+', type=str, default='yolov5s.pt', help='model.pt path(s)')
@@ -163,6 +225,7 @@ if __name__ == '__main__':
     parser.add_argument('--exist-ok', action='store_true', help='existing project/name ok, do not increment')
     opt = parser.parse_args()
     print(opt)
+    client = mqtt_topic()
 
     with torch.no_grad():
         if opt.update:  # update all models (to fix SourceChangeWarning)
