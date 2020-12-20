@@ -1,0 +1,43 @@
+version: "3.9"
+services:
+ mosquitto:
+    image: eclipse-mosquitto
+    hostname: mosquitto
+    container_name: mosquitto
+    expose:
+      - "1883"
+      - "9001"
+    ports:
+      - "1883:1883"
+      - "9001:9001"
+    networks:
+      - chicken_network
+ chicken_counter:
+    build: .
+    environment:
+     - BROKER_URL=mosquitto
+     - SOURCE=chickens_live_stream.mp4
+    volumes: 
+     - ./chickens_live_stream.mp4:/chickens_live_stream.mp4
+     - ./runs:/usr/src/app/runs
+    networks:
+      - chicken_network
+    
+    # to use webcam use the following options
+    # environment:
+    # - SOURCE=chickens_live_stream.mp4
+    #devices: 
+    # - /dev/video0:/dev/video0
+
+ chicken_streamer:
+     build: ffmpeg
+     ports:
+      - "9998:80"
+     environment:
+     - SOURCE_ADDRESS=tcp://chicken_counter:9999
+     networks:
+      - chicken_network
+     depends_on:
+      - chicken_counter
+networks:
+   chicken_network:
