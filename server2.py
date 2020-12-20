@@ -20,6 +20,11 @@ from mqtt_helper import publish_results
 
 MAX_FPS = int(os.environ.get('MAX_FPS', '100'))
 
+from flask import Flask, render_template, Response
+import cv2
+
+app = Flask(__name__)
+
 
 def detect(save_img=False):
     source, weights, view_img, save_txt, imgsz = opt.source, opt.weights, opt.view_img, opt.save_txt, opt.img_size
@@ -149,10 +154,10 @@ def detect(save_img=False):
             print(f'{s}Done. ({t2 - t1:.3f}s)')
 
             # Stream results
-            if view_img:
-                cv2.imshow(str(p), im0)
-                if cv2.waitKey(1) == ord('q'):  # q to quit
-                    raise StopIteration
+            ret, buffer = cv2.imencode('.jpg', im0)
+            frame = buffer.tobytes()
+            yield (b'--frame\r\n'
+                   b'Content-Type: image/jpeg\r\n\r\n' + frame + b'\r\n')  # concat frame one by one and show result
 
             # Save results (image with detections)
             if save_img:
@@ -206,10 +211,19 @@ if __name__ == '__main__':
     print(opt)
     client = mqtt_topic(opt)
 
-    with torch.no_grad():
-        if opt.update:  # update all models (to fix SourceChangeWarning)
-            for opt.weights in ['yolov5s.pt', 'yolov5m.pt', 'yolov5l.pt', 'yolov5x.pt']:
-                detect()
-                strip_optimizer(opt.weights)
-        else:
-            detect()
+
+@app.route('/video_feed')
+def video_feed():
+    """Video streaming route. Put this in the src attribute of an img tag."""
+    return Response(detect(),
+                    mimetype='multipart/x-mixed-replace; boundary=frame')
+
+
+@app.route('/')
+def index():
+    """Video streaming home page."""
+    return render_template('index.html')
+
+
+if __name__ == '__main__':
+    app.run(host='0.0.0.0')

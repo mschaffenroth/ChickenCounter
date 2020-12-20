@@ -16,6 +16,10 @@ tqdm>=4.41.0
 # mqtt 
 paho-mqtt
 
+# aiohttp
+aiohttp
+aiortc
+
 # logging -------------------------------------
 # wandb
 

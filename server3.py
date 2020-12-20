@@ -20,6 +20,15 @@ from mqtt_helper import publish_results
 
 MAX_FPS = int(os.environ.get('MAX_FPS', '100'))
 
+import socket
+import time
+
+# create an INET, STREAMing socket
+sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+# now connect to the web server on port 80 - the normal http port
+sock.bind(("", 9999))
+sock.listen(1) 
+conn, address = sock.accept() 
 
 def detect(save_img=False):
     source, weights, view_img, save_txt, imgsz = opt.source, opt.weights, opt.view_img, opt.save_txt, opt.img_size
@@ -121,11 +130,11 @@ def detect(save_img=False):
             txt_path = str(save_dir / 'labels' / p.stem) + ('' if dataset.mode == 'image' else f'_{frame}')
             s += '%gx%g ' % img.shape[2:]  # print string
             gn = torch.tensor(im0.shape)[[1, 0, 1, 0]]  # normalization gain whwh
+            detections_classes_numbers = []
             if len(det):
                 # Rescale boxes from img_size to im0 size
                 det[:, :4] = scale_coords(img.shape[2:], det[:, :4], im0.shape).round()
 
-                detections_classes_numbers = []
                 # Print results
                 for c in det[:, -1].unique():
                     n = (det[:, -1] == c).sum()  # detections per class
@@ -148,9 +157,17 @@ def detect(save_img=False):
             # Print time (inference + NMS)
             print(f'{s}Done. ({t2 - t1:.3f}s)')
 
+            print("send image to TEST")
+            jpeg_quality = 95
+            return_code, im_send = cv2.imencode(
+                ".jpg", im0, [int(cv2.IMWRITE_JPEG_QUALITY), jpeg_quality])
+            try:
+              conn.sendall(im_send)
+            except:
+              conn, address = sock.accept()
+              conn.sendall(im_send)
             # Stream results
             if view_img:
-                cv2.imshow(str(p), im0)
                 if cv2.waitKey(1) == ord('q'):  # q to quit
                     raise StopIteration
 
